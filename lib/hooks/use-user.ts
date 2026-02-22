@@ -1,7 +1,7 @@
 "use client"
 
 import { createClient } from "@/lib/supabase/client"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import type { User } from "@supabase/supabase-js"
 
 interface Profile {
@@ -14,27 +14,53 @@ interface Profile {
   updated_at: string
 }
 
+// Shared state to prevent duplicate getSession calls
+let sessionPromise: Promise<any> | null = null
+let isInitialized = false
+
 export function useUser() {
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
-  const supabase = createClient() // Create once outside useEffect
+  const supabase = useMemo(() => createClient(), [])
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchProfile(session.user.id)
-      } else {
-        setLoading(false)
+    let isMounted = true
+
+    const initializeAuth = async () => {
+      try {
+        // Reuse existing session promise if available
+        if (!sessionPromise || isInitialized) {
+          sessionPromise = supabase.auth.getSession()
+          isInitialized = true
+        }
+
+        const { data: { session } } = await sessionPromise
+
+        if (!isMounted) return
+
+        setUser(session?.user ?? null)
+        if (session?.user) {
+          await fetchProfile(session.user.id)
+        } else {
+          setLoading(false)
+        }
+      } catch (error) {
+        console.error('[v0] Error initializing auth:', error)
+        if (isMounted) {
+          setLoading(false)
+        }
       }
-    })
+    }
+
+    initializeAuth()
 
     // Listen for auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return
+      
       setUser(session?.user ?? null)
       if (session?.user) {
         fetchProfile(session.user.id)
@@ -44,16 +70,24 @@ export function useUser() {
       }
     })
 
-    return () => subscription.unsubscribe()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      isMounted = false
+      subscription.unsubscribe()
+    }
+  }, [supabase])
 
   const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single()
 
-    if (!error && data) {
-      setProfile(data)
+      if (!error && data) {
+        setProfile(data)
+      }
+    } catch (error) {
+      console.error('[v0] Error fetching profile:', error)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const refreshProfile = async () => {
@@ -63,9 +97,15 @@ export function useUser() {
   }
 
   const logout = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-    setProfile(null)
+    try {
+      await supabase.auth.signOut()
+      setUser(null)
+      setProfile(null)
+      sessionPromise = null
+      isInitialized = false
+    } catch (error) {
+      console.error('[v0] Error logging out:', error)
+    }
   }
 
   return {
