@@ -25,18 +25,31 @@ export function LoginForm() {
     setIsLoading(true)
     setError(null)
 
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      console.log("[v0] Starting login attempt")
+      const supabase = createClient()
+      
+      console.log("[v0] Calling signInWithPassword")
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    if (error) {
-      setError(error.message)
+      console.log("[v0] Sign in response:", { data, error })
+
+      if (error) {
+        console.error("[v0] Login error:", error)
+        setError(error.message)
+        setIsLoading(false)
+      } else {
+        console.log("[v0] Login successful, redirecting to dashboard")
+        router.push("/dashboard")
+        router.refresh()
+      }
+    } catch (err) {
+      console.error("[v0] Unexpected error during login:", err)
+      setError("An unexpected error occurred. Please try again.")
       setIsLoading(false)
-    } else {
-      router.push("/dashboard")
-      router.refresh()
     }
   }
 
